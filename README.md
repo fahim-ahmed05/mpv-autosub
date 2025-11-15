@@ -115,7 +115,7 @@ Example:
     #
     # Examples:
     #   stream_download_dir=/home/you/.local/share/mpv/stream-subs
-    #   stream_download_dir=C:\Users\You\stream-subs
+    #   stream_download_dir=C:\Users\You\AppData\Local\Temp\mpv-autosub
     stream_download_dir=
 
     # Subtitle downloader (CLI tool).
