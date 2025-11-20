@@ -1,31 +1,31 @@
 -- autosub.lua
 --
--- Auto-downloader + loader for subtitles in mpv.
+-- Auto / manual subtitle downloader + loader for mpv.
 --
 -- Features:
 --   * Uses an external CLI downloader (default: `subliminal`) to fetch subtitles.
---   * Works for both local files and HTTP/HTTPS streams.
---   * For local files:
---       - Can save subs in the video’s directory, a subdirectory, or a fixed folder.
+--   * Works for local files and HTTP/HTTPS streams.
+--   * Local files:
+--       - Saves subs in the video folder, a subdir, or a fixed folder.
 --       - Reuses existing subs if found; only downloads if none match.
---   * For HTTP/HTTPS streams:
---       - Requires `stream_download_dir` to be set in autosub.conf.
---       - If no path is set, shows a warning and skips stream subtitle handling.
---       - Reuses existing subs that match the stream name + language.
+--   * HTTP/HTTPS streams:
+--       - Requires `stream_download_dir` in autosub.conf.
+--       - Reuses existing subs that match the stream’s basename; only downloads if none.
 --   * Language-aware:
---       - You specify desired subtitle languages (e.g. `en`, `en,eng`).
---       - It only skips downloads if a track in those languages is already present.
+--       - You specify desired languages (e.g. "en,eng,fr").
+--       - Skips download in auto mode if a track in those languages already exists.
+--   * Modes:
+--       - auto   = run automatically on file-loaded
+--       - manual = run only when triggered (keybind / script-message)
 --   * Shows status messages on mpv’s OSD.
---
--- Configuration is done via script-opts/autosub.conf.
 
-local mp = require("mp")
-local msg = require("mp.msg")
-local utils = require("mp.utils")
+local mp      = require("mp")
+local msg     = require("mp.msg")
+local utils   = require("mp.utils")
 local options = require("mp.options")
 
 local o = {
-    -- Comma-separated list of language codes (ISO 639-1/2, e.g. "en", "en,eng").
+    -- Comma-separated list of language codes (ISO 639-1/2, e.g. "en", "en,eng,fr").
     languages = "en",
 
     -- Local file behavior:
@@ -33,8 +33,8 @@ local o = {
     --   "subdir"  = put subs in a subdirectory inside the video folder
     --   "fixed"   = always use local_fixed_dir below
     local_download_mode = "filedir",
-    local_subdir = "subs",
-    local_fixed_dir = "",
+    local_subdir        = "subs",
+    local_fixed_dir     = "",
 
     -- Directory for subtitles when playing HTTP/HTTPS streams.
     -- Must be set by the user. If empty, script will warn and skip streams.
@@ -43,13 +43,18 @@ local o = {
     -- Subtitle downloader (default: subliminal).
     -- Expected CLI:
     --   downloader download -l <lang> -d <dir> -- <video_path>
-    downloader = "subliminal",
+    downloader            = "subliminal",
     downloader_extra_args = "",
 
     -- Behavior regarding *existing subtitle tracks* in the playing file:
     --   "no"      = skip download if a subtitle in one of the desired languages exists
-    --   "always"  = ignore existing tracks and still perform folder-check + downloader
+    --   "always"  = ignore existing tracks and still do folder-check + downloader
     download_when_subs_present = "no",
+
+    -- Mode:
+    --   "auto"   = run automatically on file-loaded
+    --   "manual" = run only when triggered via keybinding / script-message
+    mode = "auto",
 }
 
 -- Helper: show a message both on OSD and in the log.
@@ -59,6 +64,10 @@ local function osd(text)
 end
 
 options.read_options(o, "autosub")
+o.mode = (o.mode or "auto"):lower()
+if o.mode ~= "auto" and o.mode ~= "manual" then
+    o.mode = "auto"
+end
 
 -- Helpers ---------------------------------------------------------------------
 
@@ -75,20 +84,16 @@ end
 
 local function get_local_basename_and_dir(path)
     local dir, filename = utils.split_path(path)
-    local base = filename:gsub("%.[^%.]+$", "")  -- strip last extension
+    local base = filename:gsub("%.[^%.]+$", "") -- strip last extension
     return base, filename, dir
 end
 
 local function get_stream_basename(url)
-    -- Strip query parameters
     local noquery = url:gsub("%?.*$", "")
-    -- Take last path segment
-    local last = noquery:match("([^/]+)$") or noquery
-    last = urldecode(last)
-    -- Strip fragment
-    last = last:gsub("#.*$", "")
-    -- Remove extension
-    local base = last:gsub("%.[^%.]+$", "")
+    local last    = noquery:match("([^/]+)$") or noquery
+    last          = urldecode(last)
+    last          = last:gsub("#.*$", "")       -- strip fragment
+    local base    = last:gsub("%.[^%.]+$", "")  -- strip extension
     return base
 end
 
@@ -207,15 +212,15 @@ local function add_subs_from_dir(dir, basename, for_stream)
         return 0
     end
 
-    local selected = {}
+    local selected   = {}
     local lower_base = basename and basename:lower() or nil
 
     -- 1) language + basename
     if lower_base and lower_base ~= "" then
         for _, f in ipairs(files) do
             if has_subtitle_ext(f) then
-                local f_lower = f:lower()
-                local noext_lower = f_lower:gsub("%.[^%.]+$", "")
+                local f_lower      = f:lower()
+                local noext_lower  = f_lower:gsub("%.[^%.]+$", "")
                 if noext_lower:find(lower_base, 1, true) then
                     for lang in o.languages:gmatch("[^,]+") do
                         lang = lang:lower():gsub("^%s+",""):gsub("%s+$","")
@@ -295,14 +300,14 @@ local function download_for_local(path)
 
     ensure_dir(target_dir)
 
-    -- First: try to use existing subs in the target dir
+    -- 1) Always try to use existing subs first (both auto & manual)
     local existing = add_subs_from_dir(target_dir, basename, false)
     if existing > 0 then
-        osd("autosub: using existing local subtitles (" .. existing .. "), skipping download")
+        osd("autosub: using existing local subtitles (" .. existing .. "); no download")
         return
     end
 
-    -- If none, download and then load
+    -- 2) If none, download and then load
     osd("autosub: downloading subtitles to local folder…")
     run_downloader(path, target_dir)
     add_subs_from_dir(target_dir, basename, false)
@@ -317,20 +322,20 @@ local function download_for_stream(url)
     end
 
     local basename = get_stream_basename(url)
-    local dir = o.stream_download_dir
+    local dir      = o.stream_download_dir
 
     ensure_dir(dir)
 
-    -- First: try to use existing subs for this stream
+    -- 1) Try existing subs first (both auto & manual)
     local existing = add_subs_from_dir(dir, basename, true)
     if existing > 0 then
-        osd("autosub: using existing stream subtitles (" .. existing .. "), skipping download")
+        osd("autosub: using existing stream subtitles (" .. existing .. "); no download")
         return
     end
 
+    -- 2) If none, download and then load
     osd("autosub: downloading subtitles for stream…")
 
-    -- Create a dummy file to give the downloader a "name" to guess from.
     local dummy_path = utils.join_path(dir, basename .. ".dummy.mkv")
     local f = io.open(dummy_path, "w")
     if f then f:close() end
@@ -341,17 +346,18 @@ local function download_for_stream(url)
     add_subs_from_dir(dir, basename, true)
 end
 
--- Main hook -------------------------------------------------------------------
+-- Core handler ----------------------------------------------------------------
 
-local function maybe_download_subs()
+local function handle_subs(manual)
     local path = mp.get_property("path")
     if not path then
-        osd("autosub: no path, cannot auto-download subtitles")
+        osd("autosub: no path, cannot handle subtitles")
         return
     end
 
-    -- Only skip download based on *existing tracks* if user didn't force "always"
-    if o.download_when_subs_present ~= "always" then
+    -- In auto mode, respect download_when_subs_present.
+    -- In manual mode, we always run folder check even if embedded subs exist.
+    if not manual and o.download_when_subs_present ~= "always" then
         if video_has_desired_lang_subs() then
             return
         end
@@ -364,4 +370,24 @@ local function maybe_download_subs()
     end
 end
 
-mp.register_event("file-loaded", maybe_download_subs)
+-- Auto mode hook --------------------------------------------------------------
+
+local function on_file_loaded()
+    if o.mode == "auto" then
+        handle_subs(false)
+    end
+end
+
+mp.register_event("file-loaded", on_file_loaded)
+
+-- Manual trigger: script-binding + script-message -----------------------------
+
+local function manual_trigger()
+    handle_subs(true)
+end
+
+-- script-binding: autosub/download (for input.conf)
+mp.add_key_binding(nil, "download", manual_trigger)
+
+-- script-message: autosub-download
+mp.register_script_message("autosub-download", manual_trigger)
