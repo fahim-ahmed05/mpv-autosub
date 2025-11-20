@@ -336,7 +336,7 @@ local function download_for_stream(url)
     -- 2) If none, download and then load
     osd("autosub: downloading subtitles for stream…")
 
-    local dummy_path = utils.join_path(dir, basename .. ".dummy.mkv")
+    local dummy_path = utils.join_path(dir, basename .. ".autosub.mkv")
     local f = io.open(dummy_path, "w")
     if f then f:close() end
 
