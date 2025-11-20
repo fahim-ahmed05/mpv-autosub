@@ -117,8 +117,8 @@ Example autosub.conf:
 
     # If using a fixed directory for local files, you can set:
     # local_download_mode=fixed
-    # local_fixed_dir=/home/you/Downloads/subtitles
-    # local_fixed_dir=C:\Users\You\Downloads\subtitles
+    # local_fixed_dir=/home/<username>/Downloads/subtitles
+    # local_fixed_dir=C:\Users\<UserName>\Downloads\subtitles
     local_fixed_dir=
 
     # Directory for HTTP/HTTPS stream subtitles.
@@ -126,9 +126,9 @@ Example autosub.conf:
     # If left empty, the script will show a warning and skip stream subtitles.
     #
     # Examples:
-    #   stream_download_dir=/home/you/.local/share/mpv/stream-subs
-    #   stream_download_dir=C:\Users\You\stream-subs
-    stream_download_dir=C:\Users\Fahim\Trash\Subs
+    #   stream_download_dir=/tmp/mpv-autosub
+    #   stream_download_dir=C:\Users\<UserName>\AppData\Local\Temp\mpv-autosub
+    stream_download_dir=
 
     # Subtitle downloader (CLI tool).
     downloader=subliminal
